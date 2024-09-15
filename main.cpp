@@ -24,6 +24,7 @@
 #include <vector>
 #include <initguid.h>
 #include <propkey.h>
+#include <Functiondiscoverykeys_devpkey.h>
 
 #ifndef PKEY_Device_FriendlyName
 DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0, 14);
@@ -31,6 +32,79 @@ DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0
 
 DEFINE_GUID(CLSID_MMDeviceEnumerator, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E);
 DEFINE_GUID(IID_IMMDeviceEnumerator, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36, 0x17, 0xE6);
+
+// Define the IPolicyConfig interface
+interface DECLSPEC_UUID("f8679f50-850a-41cf-9c72-430f290290c8") IPolicyConfig;
+class DECLSPEC_UUID("870af99c-171d-4f9e-af0d-e63df40c2bc9") CPolicyConfigClient;
+
+interface IPolicyConfig : public IUnknown
+{
+public:
+    virtual HRESULT GetMixFormat(
+            PCWSTR,
+            WAVEFORMATEX **
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE GetDeviceFormat(
+            PCWSTR,
+            INT,
+            WAVEFORMATEX **
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE ResetDeviceFormat(
+            PCWSTR
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE SetDeviceFormat(
+            PCWSTR,
+            WAVEFORMATEX *,
+            WAVEFORMATEX *
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE GetProcessingPeriod(
+            PCWSTR,
+            INT,
+            PINT64,
+            PINT64
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE SetProcessingPeriod(
+            PCWSTR,
+            PINT64
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE GetShareMode(
+            PCWSTR,
+            struct DeviceShareMode *
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE SetShareMode(
+            PCWSTR,
+            struct DeviceShareMode *
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE GetPropertyValue(
+            PCWSTR,
+            const PROPERTYKEY &,
+            PROPVARIANT *
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE SetPropertyValue(
+            PCWSTR,
+            const PROPERTYKEY &,
+            PROPVARIANT *
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE SetDefaultEndpoint(
+            __in PCWSTR wszDeviceId,
+            __in ERole eRole
+    );
+
+    virtual HRESULT STDMETHODCALLTYPE SetEndpointVisibility(
+            PCWSTR,
+            INT
+    );
+};
 
 struct AudioDevice {
     std::wstring id;
@@ -86,50 +160,41 @@ std::vector<AudioDevice> GetAudioDevices() {
 
 HRESULT ToggleAudioDevice(const std::wstring& deviceId, int bufferMs) {
     HRESULT hr = S_OK;
-    IMMDeviceEnumerator* pEnumerator = NULL;
-    IMMDevice* pDevice = NULL;
-    IAudioEndpointVolume* pEndpointVolume = NULL;
+    IPolicyConfig *pPolicyConfig = nullptr;
 
     try {
         hr = CoInitialize(NULL);
         if (FAILED(hr)) throw std::runtime_error("Failed to initialize COM");
 
-        hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
-                              __uuidof(IMMDeviceEnumerator), (void**)&pEnumerator);
-        if (FAILED(hr)) throw std::runtime_error("Failed to create device enumerator");
+        // Create PolicyConfig instance
+        hr = CoCreateInstance(__uuidof(CPolicyConfigClient), NULL, CLSCTX_ALL, __uuidof(IPolicyConfig), (LPVOID *)&pPolicyConfig);
+        if (FAILED(hr)) throw std::runtime_error("Failed to create PolicyConfig instance");
 
-        hr = pEnumerator->GetDevice(deviceId.c_str(), &pDevice);
-        if (FAILED(hr)) throw std::runtime_error("Failed to get the specified device");
+        // Deactivate the device
+        hr = pPolicyConfig->SetEndpointVisibility(deviceId.c_str(), 0);
+        if (FAILED(hr)) throw std::runtime_error("Failed to deactivate the device");
 
-        hr = pDevice->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, NULL, (void**)&pEndpointVolume);
-        if (FAILED(hr)) throw std::runtime_error("Failed to activate endpoint volume");
-
-        // Mute the device
-        hr = pEndpointVolume->SetMute(TRUE, NULL);
-        if (FAILED(hr)) throw std::runtime_error("Failed to mute the device");
-
-        std::wcout << L"Device " << deviceId << L" has been muted" << std::endl;
+        std::wcout << L"Device " << deviceId << L" has been deactivated" << std::endl;
 
         // Wait for the specified buffer time
         std::this_thread::sleep_for(std::chrono::milliseconds(bufferMs));
 
-        // Unmute the device
-        hr = pEndpointVolume->SetMute(FALSE, NULL);
-        if (FAILED(hr)) throw std::runtime_error("Failed to unmute the device");
+        // Reactivate the device
+        hr = pPolicyConfig->SetEndpointVisibility(deviceId.c_str(), 1);
+        if (FAILED(hr)) throw std::runtime_error("Failed to reactivate the device");
 
-        std::wcout << L"Device " << deviceId << L" has been unmuted" << std::endl;
+        std::wcout << L"Device " << deviceId << L" has been reactivated" << std::endl;
     }
     catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
     }
 
-    if (pEndpointVolume) pEndpointVolume->Release();
-    if (pDevice) pDevice->Release();
-    if (pEnumerator) pEnumerator->Release();
+    if (pPolicyConfig) pPolicyConfig->Release();
     CoUninitialize();
 
     return hr;
 }
+
 
 class AudioDeviceResetGUI : public QMainWindow {
 Q_OBJECT
